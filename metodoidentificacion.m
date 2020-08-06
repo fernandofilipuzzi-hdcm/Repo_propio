@@ -50,6 +50,8 @@ function noisy = add_white_noise_to_func(clean_signal, noise_amplitude)
 	%# OUTPUT noisy (simb髄ico) se馻l con ruido agregado
 	%#
 
+    noise = noise_amplitude * randn(size(clean_signal));
+    noisy = clean_signal + noise;
 
 end
 
@@ -61,6 +63,22 @@ function [data_ident, data_validation] = generate_ident_package(input_signal, ou
 	%# INPUT output_signal (simb髄ico) la se馻l de salida
 	%# INPUT sample_time (float) tiempo de muestreo
 	%# OUTPUT [data_ident(paquete), data_validation(paquete)]
+
+	% Armo el paquete de datos
+	data_size = size(input_signal);
+	ident_size = floor(data_size * ident_proportion);
+	data = iddata(output_signal, input_signal, sample_time);
+	data_ident = data(1:ident_size);
+	data_validation = data(ident_size+1:data_size);
+    
+	if plot_package
+        	figure(1)
+        	set(data, 'InputName', 'Entrada', 'OutputName', 'Salida')
+        	plot(data(1:ident_size), 'b', data(ident_size:data_size), 'g');
+        	legend('Identificaci贸n', 'Validaci贸n');
+        	xlabel('Tiempo [s]'); ylabel(''); title('');
+        	print -dsvg G1EJ1img1.svg
+    	end
 
 end
 
@@ -87,7 +105,34 @@ function Gzi_mc = discrete_ident_recursive_least_squares(data, Ts, plot_ident)
 	%# INPUT Ts(float):
 	%# INPUT plot_ident(boolean):
 	%# OUTPUT Gzi_mc:
+    data_size = size(data, 1);
+    n = 3;
+    u = data.InputData;
+    y = data.OutputData;
+    Theta = zeros(4, data_size);
+    P = 1e12*eye(4);
 
+    for k = n:data_size-1
+        Phi = [-y(k-1) -y(k-2) u(k-1) u(k-2)];
+        K = P*Phi'/(1+(Phi*P*Phi')); 
+        Theta(:,k+1) = Theta(:,k)+K*(y(k)-Phi*Theta(:,k));
+        P = P-(K*Phi*P);
+    end
+    Gzi_mc = tf(Theta(3:4,data_size)', [1 Theta(1:2,data_size)'], Ts)
+
+    if plot_ident
+        figure(2);
+        subplot(2, 2, 1); plot(Theta(1, :));xlabel('Tiempo [s]'); grid
+        set(gca, 'XTickLabel', 0:10:data_size); ylabel('a_1')
+        subplot(2, 2, 2); plot(Theta(2, :)); xlabel('Tiempo [s]');grid
+        set(gca, 'XTickLabel', 0:10:data_size); ylabel('a_2')
+        subplot(2, 2, 3); plot(Theta(3, :)); xlabel('Tiempo [s]');grid
+        set(gca, 'XTickLabel', 0:10:data_size); ylabel('b_1')
+        subplot(2, 2, 4); plot(Theta(4, :)); grid
+        set(gca, 'XTickLabel', 0:10:data_size); ylabel('b_2')
+        xlabel('Tiempo [s]');
+        print -dsvg G1EJ1img2.svgend
+    end
 end
 
 function analyze_residuals(data, sys_id, sampling_frequency)
@@ -98,6 +143,35 @@ function analyze_residuals(data, sys_id, sampling_frequency)
 	%# INPUT sys_id( - ):
 	%# INPUT sampling_frequency(float):
 
+    %% Analisis de residuos
+    e = resid(sys_id, data);
+
+    figure(4); 
+    % Auto-correlaci贸n del residuo
+    subplot(2, 2, 1); 
+    [Rmm, lags] = xcorr(e.y, 'coeff');
+    Rmm = Rmm(lags>0); lags = lags(lags>0);
+    plot(lags/sampling_frequency,Rmm); xlabel('Lag [s]');
+    title('Auto-corr. residuo');
+
+    % Correlaci贸n del residuo con la salida
+    subplot(2, 2, 2); 
+    [Rmm, lags] = xcorr(e.y, data.OutputData, 'coeff');
+    Rmm = Rmm(lags>0); lags = lags(lags>0);
+    plot(lags/sampling_frequency, Rmm); xlabel('Lag [s]');
+    title('Corr. residuo/salida');
+
+    % Histograma del residuo
+    subplot(2, 2, 3); 
+    histfit(e.y); title('Histograma residuo');
+
+    % Correlaci贸n del residuo con la salida
+    subplot(2, 2, 4); 
+    [Rmm, lags] = xcorr(e.y, data.InputData, 'coeff');
+    Rmm = Rmm(lags>0); lags = lags(lags>0);
+    plot(lags/sampling_frequency, Rmm); xlabel('Lag [s]');
+    title('Corr. residuo/entrada');
+    print -dsvg G1EJ1img4.svg
 end
 
 function validate_identifications(data, Gzi, Gzi_mc)
@@ -107,5 +181,18 @@ function validate_identifications(data, Gzi, Gzi_mc)
 	%# INPUT data(paquete): 
 	%# INPUT Gzi(tf):
 	%# INPUT Gzi_mc(tf):
+
+         data_size = size(data);
+    [y_sys, fit] = compare(data, Gzi);
+    [y_mc, fit_mc] = compare(data, Gzi_mc);
+    t = (1:data_size);
+    
+    figure(3);
+    plot(t, y_sys.OutputData, 'r', t, y_mc.OutputData, 'g--', t, data.OutputData, 'b-.');
+    title('Validaci贸n de resultados');
+    set(gca, 'XTickLabel', 60:10:data_size);
+    xlabel('Tiempo [s]');
+    legend(sprintf('ARX (%2.2f)', fit), sprintf('RLS (%2.2f)', fit_mc), 'Salida', 'Location', 'SouthEast');
+    print -dsvg G1EJ1img3.svg
 end
 
